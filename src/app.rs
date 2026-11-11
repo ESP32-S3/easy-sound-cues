@@ -777,8 +777,8 @@ impl App {
     /// Bring in a show from a folder or a .zip someone gave you.
     fn import_show(&mut self, ctx: &egui::Context) {
         let Some(picked) = rfd::FileDialog::new()
-            .set_title("Choose the show (a .zip file, or the show's folder)")
-            .add_filter("Show", &["zip"])
+            .set_title("Choose the show: its .zip file, or the show.json file inside its folder")
+            .add_filter("Show (.zip, or show.json in a show's folder)", &["zip", "json"])
             .pick_file()
         else {
             return;
