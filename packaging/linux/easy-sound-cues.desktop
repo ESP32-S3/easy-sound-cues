@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Easy Sound Cues
+Comment=Play the sound effects and music for a show, one button press at a time
+Exec=@EXEC@
+Icon=easy-sound-cues
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+StartupWMClass=easy-sound-cues

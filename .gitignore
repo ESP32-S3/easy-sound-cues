@@ -1,0 +1,12 @@
+/target
+/dist
+# Sounds never go in this repository: every show keeps its own copies on its own computer.
+*.mp3
+*.wav
+*.m4a
+*.aac
+*.ogg
+*.oga
+*.flac
+*.opus
+*.webm
