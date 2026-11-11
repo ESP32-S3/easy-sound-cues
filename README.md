@@ -19,6 +19,8 @@ words to listen for. When the actor says them, you press the big green **GO** bu
 - **Nothing to set up by hand.** On first launch it checks your computer and gets what it needs.
 - **Saves itself.** No save button to forget, and an Undo button for second thoughts.
 - **Keeps itself up to date.** When there's a new version, it offers to update with one click.
+- **Reports its own problems.** If something goes wrong, an anonymous report goes to the app's
+  maker automatically, so it can be fixed. ([What's in it?](#error-reports-and-privacy))
 
 ## Download it
 
@@ -194,6 +196,26 @@ Once a day the app quietly checks this page for a new version. If there is one, 
 and puts it in place; then **Restart now**. Your shows are never touched by an update. You can turn
 this off, or check by hand, in **⚙ Settings › Updates**.
 
+## Error reports and privacy
+
+If anything goes wrong (the app can't open its window, a sound won't load, a YouTube download
+fails, the speakers stop, the app crashes), it sends a short report to its maker automatically,
+so the problem can be fixed. It starts working before anything else when the app opens, so even
+problems that happen while the app is starting are reported. If the computer is offline, the
+report waits and goes the next time the app starts.
+
+A report contains what went wrong and where, the app's version, the kind of computer (like
+“Windows 11”), and the last few things the app did (like “GO: sound 3 of 6”). Each copy of the
+app also makes up a random number for itself, so reports from the same computer can be grouped.
+
+Reports **never** contain your name or user name, your folders, your shows' names or contents,
+or your sounds: names and home folders are removed before anything is sent. Reports go to a small
+private server ([its code is here](report-server/)), are only visible to the app's maker, and are
+deleted after 90 days.
+
+To turn reports off: **⚙ Settings › Error reports**. You can also send a test report there, and
+**? Help › Something isn't working?** sends a message in your own words.
+
 ## For people who know computers
 
 Easy Sound Cues is written in Rust with [egui](https://github.com/emilk/egui) for the window and
@@ -210,11 +232,17 @@ src/
   tools.rs    finding and downloading yt-dlp, FFmpeg and Deno
   ytdl.rs     running yt-dlp, its progress, and plain-English errors
   updater.rs  checking for and installing new versions of the app
+  reporter.rs error reports, started before anything else
   ui*.rs      the pages; style.rs has the colours and big buttons
   synth.rs    the practice show's made-up sounds
 ```
 
 A show is a folder: `show.json` plus a `sounds` folder. `show.json` is plain JSON and safe to edit.
+
+Error reports are sent by `src/reporter.rs` to a Cloudflare Worker in [`report-server/`](report-server/),
+which keeps them in a D1 database. Running `easy-sound-cues --crash-test` crashes on purpose to
+check reports get through from a computer; `easy-sound-cues --update` updates without opening the
+window.
 
 To build it yourself, install [Rust](https://rustup.rs), then:
 

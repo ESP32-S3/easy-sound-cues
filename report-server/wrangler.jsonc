@@ -1,0 +1,16 @@
+{
+  // Receives error reports from Easy Sound Cues. Deploy with: wrangler deploy
+  // Secrets (set with `wrangler secret put NAME`, never committed):
+  //   VIEW_KEY      the key in the private report page's link
+  //   IP_SALT       salt for hashing senders' IP addresses
+  //   NOTIFY_EMAIL  where new problems are emailed (needs Email Routing and an EMAIL binding)
+  // Optional var FROM_EMAIL: the address those emails come from, on a domain with Email Routing.
+  "name": "easy-sound-cues-reports",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": true,
+  "d1_databases": [
+    { "binding": "DB", "database_name": "easy-sound-cues-reports", "database_id": "7476b700-157b-4369-9823-c3b30a562a5a" }
+  ],
+  "observability": { "enabled": true }
+}

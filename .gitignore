@@ -10,3 +10,7 @@
 *.flac
 *.opus
 *.webm
+
+# Local state from wrangler (deploy caches, never secrets worth sharing)
+report-server/.wrangler/
+node_modules/

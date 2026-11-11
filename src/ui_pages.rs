@@ -72,6 +72,8 @@ impl App {
                 ui.label(RichText::new("You don't need to know anything about computers or sound. Everything is explained as you go, and you can't break anything.").size(19.0).color(p().muted));
                 ui.add_space(6.0);
                 ui.label(RichText::new("First, the app will check that this computer has everything it needs. It takes about a minute.").size(19.0).color(p().muted));
+                ui.add_space(6.0);
+                ui.label(RichText::new("If something ever goes wrong, the app sends a short anonymous error report to its maker so it can be fixed. It never includes your name, your files or your shows. You can turn this off in Settings.").size(15.0).color(p().faint));
                 ui.add_space(24.0);
                 let go = style::big_button(ui, "Let's get started  ▶", None, (p().go, p().go_hover, p().go_ink), vec2(320.0, 64.0), 24.0, true);
                 if go.clicked() {
@@ -491,6 +493,8 @@ impl App {
         self.yt.url = url.clone();
         let req = ytdl::Request { url, from, to, dest: self.download_dir(), name: self.yt.name.clone() };
         let repaint = ctx.clone();
+        crate::reporter::log(format!("youtube download started (part: {:?} to {:?})", from, to));
+        self.yt.reported = false;
         self.yt.job = Some(ytdl::Job::start(req, helpers, move || repaint.request_repaint()));
     }
 
@@ -628,6 +632,15 @@ impl App {
                     }
                 });
                 ui.separator();
+                egui::CollapsingHeader::new(RichText::new("Something isn't working? Tell the app's maker").size(17.0).family(bold())).show(ui, |ui| {
+                    hint(ui, "Say what happened in your own words. What the app did recently is sent along with it (never your name or files).");
+                    ui.add(egui::TextEdit::multiline(&mut self.feedback).hint_text("e.g. When I press GO on sound 4, nothing plays.").desired_rows(3).desired_width(f32::INFINITY));
+                    let ready = !self.feedback.trim().is_empty();
+                    if style::primary(ui, "Send it", ready).clicked() {
+                        acts.push(Act::Feedback);
+                    }
+                });
+                ui.separator();
                 ScrollArea::vertical().show(ui, |ui| {
                     for (question, steps) in HELP {
                         egui::CollapsingHeader::new(RichText::new(*question).size(17.0).family(bold())).show(
@@ -729,6 +742,30 @@ impl App {
                         if ui.button("Show the folder").clicked() {
                             let _ = std::fs::create_dir_all(&dir);
                             crate::paths::reveal(&dir);
+                        }
+                    });
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.label(strong("Error reports", 18.0));
+                    if ui.checkbox(&mut self.settings.send_reports, "When something goes wrong, send an anonymous report to the app's maker (recommended)").changed() {
+                        crate::reporter::set_enabled(self.settings.send_reports);
+                        self.settings.save();
+                    }
+                    hint(ui, "Reports help get problems fixed. They're sent automatically, without interrupting you.");
+                    egui::CollapsingHeader::new("What's in a report?").show(ui, |ui| {
+                        for line in [
+                            "What went wrong, and which part of the app it happened in.",
+                            "The app's version, and which system the computer runs (like “Windows 11”).",
+                            "The last few things the app did before the problem (like “GO: sound 3 of 6”).",
+                            "A random number this copy of the app made up for itself, so reports from one computer can be grouped.",
+                            "Never: your name, your user name, your folders, your shows' names or contents, or your sounds.",
+                        ] {
+                            ui.label(format!("•  {line}"));
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.add_enabled(self.settings.send_reports, egui::Button::new("Send a test report")).on_hover_text("Checks that reports get through from this computer and network").clicked() {
+                            acts.push(Act::TestReport);
                         }
                     });
                     ui.add_space(8.0);

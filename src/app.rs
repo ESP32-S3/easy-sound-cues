@@ -8,7 +8,7 @@ use crate::audio::{Clip, Engine, Song, Voice};
 use crate::paths::{self, Settings};
 use crate::show::{self, Cue, Music, Placement, ScriptLine, Show};
 use crate::tools::{self, Check, Found, Progress, Tool};
-use crate::{updater, ytdl};
+use crate::{reporter, updater, ytdl};
 use eframe::egui;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -122,6 +122,8 @@ pub(crate) enum Act {
     CheckUpdate,
     UpdateNow,
     RestartApp,
+    TestReport,
+    Feedback,
 }
 
 /// What a file chosen from "Sounds you already have" is for.
@@ -243,9 +245,15 @@ impl Sounds {
 
     fn poll(&mut self) {
         while let Ok((path, clip)) = self.rx.try_recv() {
+            if let Err(e) = &clip {
+                reporter::error("loading a sound", e, "");
+            }
             self.clips.insert(path, clip.map(Arc::new).map_or_else(Loaded::Failed, Loaded::Ready));
         }
         while let Ok((path, song)) = self.song_rx.try_recv() {
+            if let Err(e) = &song {
+                reporter::error("loading music", e, "");
+            }
             self.songs.insert(path, song.map(Arc::new).map_or_else(Loaded::Failed, Loaded::Ready));
         }
     }
@@ -389,6 +397,16 @@ impl Helpers {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 HelperMsg::Checked(tool, check) => {
+                    match &check {
+                        Check::Ready(f) => reporter::log(format!(
+                            "{}: version {} ({})",
+                            tool.program(),
+                            f.version,
+                            if f.ours { "ours" } else { "on the computer" }
+                        )),
+                        Check::Missing => reporter::log(format!("{}: missing", tool.program())),
+                        Check::Broken(e) => reporter::error(&format!("check computer: {}", tool.program()), e, ""),
+                    }
                     self.state[slot(tool)] = match check {
                         Check::Ready(found) => HelperState::Ready(found),
                         Check::Missing => HelperState::Missing,
@@ -402,6 +420,13 @@ impl Helpers {
                 }
                 HelperMsg::Installed(tool, result) => {
                     let quiet = self.quiet.remove(&tool);
+                    match &result {
+                        Ok(found) => reporter::log(format!("{}: installed version {}", tool.program(), found.version)),
+                        Err(e) => {
+                            let how = if quiet { "an automatic update" } else { "asked for by the person" };
+                            reporter::error(&format!("downloading a helper: {}", tool.program()), e, how);
+                        }
+                    }
                     match result {
                         Ok(found) => {
                             if quiet {
@@ -419,8 +444,20 @@ impl Helpers {
                     let busy = self.state.iter().any(|s| matches!(s, HelperState::Installing(_)));
                     self.installing = busy || !self.quiet.is_empty();
                 }
-                HelperMsg::Online(online) => self.online = Some(online),
-                HelperMsg::Folder(result) => self.folder = Some(result),
+                HelperMsg::Online(online) => {
+                    reporter::log(if online {
+                        "internet: YouTube reachable"
+                    } else {
+                        "internet: YouTube not reachable"
+                    });
+                    self.online = Some(online);
+                }
+                HelperMsg::Folder(result) => {
+                    if let Err(e) = &result {
+                        reporter::error("check computer: the shows folder", e, "");
+                    }
+                    self.folder = Some(result);
+                }
             }
         }
         // Keep the app's own yt-dlp fresh: YouTube changes often and old copies stop working.
@@ -462,6 +499,8 @@ pub(crate) struct YouTube {
     pub target: Target,
     pub job: Option<ytdl::Job>,
     pub problem: Option<String>,
+    /// The current download's failure has been reported.
+    pub reported: bool,
     /// Downloads finished this session: where they went and what became of them.
     pub done: Vec<(PathBuf, String)>,
 }
@@ -549,6 +588,13 @@ pub struct App {
     pending_preview: Option<PathBuf>,
     pub(crate) fix_open: bool,
     pub(crate) update: UpdateState,
+    /// The speaker problem last reported, so each new one is reported once.
+    audio_reported: Option<String>,
+    /// What the person typed in Help's "Tell the app's maker".
+    pub(crate) feedback: String,
+    /// Results of sending a test report or feedback, from the thread that sent it.
+    sent_tx: Sender<(String, Tone)>,
+    sent_rx: Receiver<(String, Tone)>,
     update_tx: Sender<UpdateMsg>,
     update_rx: Receiver<UpdateMsg>,
 }
@@ -563,6 +609,7 @@ impl App {
     /// The app around a given audio engine; tests and screenshots pass a silent one.
     pub fn with_engine(ctx: &egui::Context, settings: Settings, engine: Engine) -> Self {
         let (update_tx, update_rx) = channel();
+        let (sent_tx, sent_rx) = channel();
         crate::style::load_fonts(ctx);
         crate::style::apply(ctx, settings.light, settings.text_size);
         let mut app = Self {
@@ -594,6 +641,7 @@ impl App {
                 target: Target::Purpose,
                 job: None,
                 problem: None,
+                reported: false,
                 done: Vec::new(),
             },
             tour: None,
@@ -610,6 +658,10 @@ impl App {
             pending_preview: None,
             fix_open: false,
             update: UpdateState::Idle,
+            audio_reported: None,
+            feedback: String::new(),
+            sent_tx,
+            sent_rx,
             update_tx,
             update_rx,
         };
@@ -618,6 +670,18 @@ impl App {
         let due = now.saturating_sub(app.settings.last_update_check) > 20 * 3600;
         if app.settings.check_updates && due && std::env::var_os("EASY_SOUND_CUES_HOME").is_none() {
             app.check_update(false, ctx);
+        }
+        match &app.engine.problem {
+            Some(problem) => {
+                let detail = format!(
+                    "{} speakers listed; {} chosen in Settings",
+                    crate::audio::speakers().len(),
+                    if app.settings.speaker.is_some() { "specific speakers" } else { "the default speakers" }
+                );
+                reporter::error("start: opening the speakers", problem, &detail);
+                app.audio_reported = Some(problem.clone());
+            }
+            None => reporter::log(format!("speakers open at {} Hz", app.engine.sample_rate)),
         }
         app.helpers.check(ctx);
         if app.settings.welcomed
@@ -630,7 +694,24 @@ impl App {
     }
 
     pub(crate) fn notify(&mut self, text: impl Into<String>, tone: Tone) {
-        self.toast = Some((Instant::now(), text.into(), tone));
+        let text = text.into();
+        // Every problem the person is shown also goes to the app's maker.
+        if tone == Tone::Bad {
+            reporter::error(&self.where_now(), &text, "");
+        }
+        self.toast = Some((Instant::now(), text, tone));
+    }
+
+    /// Which part of the app the person is in, for reports.
+    fn where_now(&self) -> String {
+        match (self.page, self.tab) {
+            (Page::Hello, _) => "welcome".into(),
+            (Page::Checkup, _) => "check computer".into(),
+            (Page::Start, _) => "start page".into(),
+            (Page::Main, Tab::Run) => "run the show".into(),
+            (Page::Main, Tab::Setup) => format!("set up: {:?}", self.setup_tab).to_lowercase(),
+            (Page::Main, Tab::YouTube) => "youtube to mp3".into(),
+        }
     }
 
     pub(crate) fn toast_showing(&self) -> bool {
@@ -704,6 +785,13 @@ impl App {
                 self.tab = if has_sounds { Tab::Run } else { Tab::Setup };
                 self.setup_tab = SetupTab::Sounds;
                 self.load_sounds(ctx);
+                let open = self
+                    .open
+                    .as_ref()
+                    .map(|o| (o.show.cues.len(), o.show.music.len(), !o.show.script.trim().is_empty()));
+                if let Some((cues, songs, script)) = open {
+                    reporter::log(format!("opened a show: {cues} sounds, {songs} songs, script: {script}"));
+                }
                 self.notify(format!("Opened “{title}”."), Tone::Info);
             }
             Err(e) => self.notify(e, Tone::Bad),
@@ -853,6 +941,7 @@ impl App {
     }
 
     fn go(&mut self) {
+        reporter::log(format!("GO: sound {} of {}", self.next + 1, self.cues().len()));
         if self.last_go.is_some_and(|t| t.elapsed() < GO_LOCKOUT) {
             self.notify(
                 "GO was pressed twice quickly, so the second press was ignored (no sound was skipped).",
@@ -1242,6 +1331,7 @@ impl App {
                     };
                 }
                 UpdateMsg::Latest(Err(e), asked) => {
+                    reporter::error("checking for an update", &e, if asked { "asked for" } else { "automatic" });
                     self.update = if asked {
                         UpdateState::Failed(format!("Couldn't check for updates: {e}."))
                     } else {
@@ -1251,6 +1341,7 @@ impl App {
                 UpdateMsg::Progress(p) => self.update = UpdateState::Installing(p),
                 UpdateMsg::Installed(Ok(exe)) => self.update = UpdateState::Ready(exe),
                 UpdateMsg::Installed(Err(e)) => {
+                    reporter::error("installing an update", &e, "");
                     self.update = UpdateState::Failed(format!("The update didn't work: {e}."))
                 }
             }
@@ -1483,6 +1574,7 @@ impl App {
                 }
             }
             Act::Tab(tab) => {
+                reporter::log(format!("page: {tab:?}"));
                 self.tab = tab;
                 if tab == Tab::Run {
                     self.scroll_to_next = true;
@@ -1527,6 +1619,28 @@ impl App {
                 self.check_update(true, ctx);
             }
             Act::UpdateNow => self.install_update(ctx),
+            Act::TestReport => {
+                self.notify("Sending a test report…", Tone::Info);
+                let (tx, ctx) = (self.sent_tx.clone(), ctx.clone());
+                std::thread::spawn(move || {
+                    // Shown as plain news either way: a failed test is the answer, not a new problem.
+                    let text = reporter::send_test().unwrap_or_else(|e| e);
+                    let _ = tx.send((text, Tone::Info));
+                    ctx.request_repaint();
+                });
+            }
+            Act::Feedback => {
+                let words = std::mem::take(&mut self.feedback);
+                let (tx, ctx) = (self.sent_tx.clone(), ctx.clone());
+                std::thread::spawn(move || {
+                    let answer = match reporter::send_feedback(&words) {
+                        Ok(()) => ("Thanks! Your message was sent to the app's maker.".to_string(), Tone::Good),
+                        Err(e) => (format!("Your message couldn't be sent: {e}"), Tone::Info),
+                    };
+                    let _ = tx.send(answer);
+                    ctx.request_repaint();
+                });
+            }
             Act::RestartApp => {
                 if let UpdateState::Ready(exe) = self.update.clone() {
                     self.save_now();
@@ -1540,6 +1654,9 @@ impl App {
 
     /// Everything that happens between frames: background work landing, sounds ending, saving.
     fn tick(&mut self, ctx: &egui::Context) {
+        while let Ok((text, tone)) = self.sent_rx.try_recv() {
+            self.notify(text, tone);
+        }
         self.sounds.poll();
         self.poll_update();
         // A preview asked for before its file had loaded plays as soon as it's ready.
@@ -1565,11 +1682,31 @@ impl App {
         self.voices.retain(|v| !v.ended());
         self.music.retain(|v| !v.ended());
         self.engine.poll();
+        if self.engine.problem != self.audio_reported {
+            if let Some(problem) = &self.engine.problem {
+                reporter::error("speakers", problem, &format!("{} speakers listed", crate::audio::speakers().len()));
+            }
+            self.audio_reported = self.engine.problem.clone();
+        }
         if let Some(job) = &mut self.yt.job {
             job.poll();
-            if let ytdl::Step::Done { path, title } = job.step.clone() {
-                self.yt.job = None;
-                self.use_download(path, title, ctx);
+            match job.step.clone() {
+                ytdl::Step::Done { path, title } => {
+                    reporter::log("youtube download finished");
+                    self.yt.job = None;
+                    self.use_download(path, title, ctx);
+                }
+                ytdl::Step::Failed { message, detail } if !self.yt.reported => {
+                    self.yt.reported = true;
+                    if message != "Download cancelled." {
+                        let what = format!(
+                            "link: {}\nfrom: {:?} to: {:?}\n\nyt-dlp said:\n{detail}",
+                            self.yt.url, self.yt.from, self.yt.to
+                        );
+                        reporter::error("youtube to mp3", &message, &what);
+                    }
+                }
+                _ => {}
             }
         }
         if let Some(open) = &mut self.open {

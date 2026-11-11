@@ -74,6 +74,10 @@ pub struct Settings {
     pub check_updates: bool,
     /// When that last happened, in seconds since 1970.
     pub last_update_check: u64,
+    /// Send an anonymous report to the app's maker when something goes wrong.
+    pub send_reports: bool,
+    /// Random id for this installation, so reports from different computers can be told apart.
+    pub install_id: String,
 }
 
 impl Default for Settings {
@@ -88,6 +92,8 @@ impl Default for Settings {
             no_youtube: false,
             check_updates: true,
             last_update_check: 0,
+            send_reports: true,
+            install_id: String::new(),
         }
     }
 }
