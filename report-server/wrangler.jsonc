@@ -3,8 +3,8 @@
   // Secrets (set with `wrangler secret put NAME`, never committed):
   //   VIEW_KEY      the key in the private report page's link
   //   IP_SALT       salt for hashing senders' IP addresses
-  //   NOTIFY_EMAIL  where new problems are emailed (needs Email Routing and an EMAIL binding)
-  // Optional var FROM_EMAIL: the address those emails come from, on a domain with Email Routing.
+  //   NOTIFY_EMAIL  where new problems are emailed (a verified Email Routing destination)
+  //   FROM_EMAIL    the address they come from, on a domain with Email Routing turned on
   "name": "easy-sound-cues-reports",
   "main": "src/index.js",
   "compatibility_date": "2026-11-01",
@@ -12,5 +12,7 @@
   "d1_databases": [
     { "binding": "DB", "database_name": "easy-sound-cues-reports", "database_id": "7476b700-157b-4369-9823-c3b30a562a5a" }
   ],
+  // Lets the Worker send email through Email Routing, only ever to verified addresses.
+  "send_email": [{ "name": "EMAIL" }],
   "observability": { "enabled": true }
 }
